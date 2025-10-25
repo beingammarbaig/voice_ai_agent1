@@ -61,7 +61,7 @@ export async function processSpeech(req, res) {
 You are a data extraction assistant.
 Extract the person's full name and the meeting datetime from the text below.
 
-The current date and time is: "${nowISO}"
+Todays date and time is: "${nowISO}"
 
 Output MUST be a single, valid JSON object:
 {
