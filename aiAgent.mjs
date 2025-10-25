@@ -4,7 +4,10 @@ import { GoogleGenAI } from "@google/genai"; // New SDK
 import { bookMeeting } from "./calendar.mjs";
 
 // Initialize the GoogleGenAI client (will auto-detect GEMINI_API_KEY)
-const ai = new GoogleGenAI();
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  project: process.env.GOOGLE_CLOUD_PROJECT
+});
 const GEMINI_MODEL = "gemini-2.5-flash"; 
 
 /**
