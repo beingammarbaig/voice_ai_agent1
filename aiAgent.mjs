@@ -18,8 +18,8 @@ export async function handleCallWebhook(req, res) {
     transcribeCallback: "/process-speech", // Twilio calls this after transcribing
   });
 
-  res.type("text/xml");
-  res.send(twiml.toString());
+  res.writeHead(200, { "Content-Type": "text/xml" });
+  res.end(twiml.toString());
 }
 
 // Step 2: Handle Twilio transcription callback
@@ -30,8 +30,8 @@ export async function processSpeech(req, res) {
   if (!transcription) {
     const twiml = new twilio.twiml.VoiceResponse();
     twiml.say("Sorry, I didn't catch that. Please try again.");
-    res.type("text/xml");
-    return res.send(twiml.toString());
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    return res.end(twiml.toString());
   }
 
   // Extract time from user sentence using AI
@@ -55,6 +55,6 @@ export async function processSpeech(req, res) {
   // Reply via Twilio
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say(`Great! I have booked your meeting for ${meetingTime}.`);
-  res.type("text/xml");
-  res.send(twiml.toString());
+  res.writeHead(500, { "Content-Type": "text/plain" });
+  res.end(twiml.toString());
 }
