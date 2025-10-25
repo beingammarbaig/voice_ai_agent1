@@ -1,4 +1,4 @@
-const { google } = require("googleapis");
+import { google } from "googleapis";
 
 const oAuth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -18,4 +18,3 @@ export async function bookMeeting(name, time) {
   console.log("📅 Meeting created:", response.data.htmlLink);
 }
 
-module.exports = { bookMeeting };

@@ -58,5 +58,3 @@ export async function processSpeech(req, res) {
   res.type("text/xml");
   res.send(twiml.toString());
 }
-
-module.exports = { handleCallWebhook, processSpeech };
