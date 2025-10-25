@@ -3,17 +3,17 @@ import twilio from "twilio";
 import { GoogleGenAI } from "@google/genai";
 import { bookMeeting } from "./calendar.mjs";
 
-// Initialize the Gemini client
+// Initialize Gemini client
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY, // Set this in your Vercel environment
+  apiKey: process.env.GEMINI_API_KEY,
 });
 
-const GEMINI_MODEL = "gemini-2.5-flash"; // Specify your Gemini model
+const GEMINI_MODEL = "gemini-2.5-flash";
 
 /**
  * Calls Gemini to extract structured data (name and datetime)
  * @param {string} prompt
- * @returns {Promise<string>} - raw JSON text from Gemini
+ * @returns {Promise<string>} - raw text from Gemini
  */
 async function callGemini(prompt) {
   try {
@@ -23,15 +23,9 @@ async function callGemini(prompt) {
       config: { temperature: 0, maxOutputTokens: 200 },
     });
 
-    // Gemini now returns candidates array
-    let text = "";
-    
-    text = response.text || "";
- 
-
-    if (!text) {
-      throw new Error("Gemini response missing content");
-    }
+    // response.text may be undefined
+    const text = response?.text || "";
+    if (!text) throw new Error("Gemini response missing content");
 
     return text;
   } catch (error) {
@@ -61,9 +55,13 @@ export async function processSpeech(req, res) {
   const transcription = req.body.TranscriptionText || "User did not speak";
   console.log("🗣 Transcription received:", transcription);
 
+  const nowISO = new Date().toISOString();
+
   const PROMPT_INSTRUCTION = `
 You are a data extraction assistant.
 Extract the person's full name and the meeting datetime from the text below.
+
+The current date and time is: "${nowISO}"
 
 Output MUST be a single, valid JSON object:
 {
@@ -75,40 +73,41 @@ Text:
 "${transcription}"
 `;
 
-  let meetingData;
+  let meetingData = null;
 
   try {
     const geminiOutput = await callGemini(PROMPT_INSTRUCTION);
 
-    // Clean and parse the JSON
+    // Clean and parse JSON
     const cleanedOutput = geminiOutput.trim().replace(/^```json\s*|```\s*$/g, "");
     console.log("🤖 Gemini raw output:", geminiOutput);
     console.log("🧹 Cleaned JSON:", cleanedOutput);
 
-    meetingData = JSON.parse(cleanedOutput);
+    const parsed = JSON.parse(cleanedOutput);
 
-    if (!meetingData.name || !meetingData.datetime) {
-      throw new Error("Missing 'name' or 'datetime' field in Gemini output");
+    // Only proceed if both fields exist
+    if (parsed.name && parsed.datetime) {
+      meetingData = parsed;
+      console.log(`✅ Extracted Name: ${meetingData.name}`);
+      console.log(`✅ Extracted Datetime: ${meetingData.datetime}`);
+    } else {
+      console.warn("⚠️ Gemini returned incomplete data. No meeting will be created.");
     }
-
-    console.log(`✅ Extracted Name: ${meetingData.name}`);
-    console.log(`✅ Extracted Datetime: ${meetingData.datetime}`);
   } catch (err) {
-    console.error("❌ Data extraction or parsing failed, using fallback:", err.message);
-    meetingData = {
-      name: "Fallback User",
-      datetime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    };
+    console.error("❌ Data extraction failed. No meeting will be created:", err.message);
   }
 
-  // Book the meeting
-  await bookMeeting(meetingData.name, meetingData.datetime);
-
-  // Respond via Twilio
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say(
-    `Great! I have booked your meeting with ${meetingData.name} for ${meetingData.datetime}.`
-  );
+
+  if (meetingData) {
+    // Book the meeting only if valid data exists
+    await bookMeeting(meetingData.name, meetingData.datetime);
+    twiml.say(`Great! I have booked your meeting with ${meetingData.name} for ${meetingData.datetime}.`);
+  } else {
+    // Inform user that meeting could not be booked
+    twiml.say("Sorry, I could not understand your meeting details. Please try again.");
+  }
+
   res.writeHead(200, { "Content-Type": "text/xml" });
   res.end(twiml.toString());
 }
