@@ -5,8 +5,7 @@ import { bookMeeting } from "./calendar.mjs";
 
 // Initialize the GoogleGenAI client (will auto-detect GEMINI_API_KEY)
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  project: process.env.GOOGLE_CLOUD_PROJECT
+  apiKey: process.env.GEMINI_API_KEY
 });
 const GEMINI_MODEL = "gemini-2.5-flash"; 
 
