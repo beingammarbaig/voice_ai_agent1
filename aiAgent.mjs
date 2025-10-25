@@ -1,14 +1,14 @@
 // aiAgent.mjs
 import twilio from "twilio";
-import { ResponsesClient } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { bookMeeting } from "./calendar.mjs";
 
-// Initialize Gemini client
-const ai = new ResponsesClient({
-  apiKey: process.env.GEMINI_API_KEY, // Your Gemini API Key
+// Initialize the GoogleGenAI client
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
 });
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-2.5-flash"; // Specify the model you wish to use
 
 /**
  * Calls Gemini to extract structured data (name and datetime)
@@ -17,17 +17,16 @@ const GEMINI_MODEL = "gemini-2.5-flash";
  */
 async function callGemini(prompt) {
   try {
-    const response = await ai.createResponse({
+    const response = await ai.generateContent({
       model: GEMINI_MODEL,
-      input: prompt,
+      contents: prompt,
+      config: {
+        temperature: 0,
+        maxOutputTokens: 200,
+      },
     });
 
-    // Extract the text content
-    if (response.output && response.output.length > 0) {
-      const textBlocks = response.output[0].content.filter((c) => c.text).map((c) => c.text);
-      return textBlocks.join("\n");
-    }
-    return "";
+    return response.text;
   } catch (error) {
     throw new Error(`Gemini API call failed: ${error.message}`);
   }
