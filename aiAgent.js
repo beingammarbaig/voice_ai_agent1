@@ -1,13 +1,13 @@
-const OpenAI = require("openai");
-const twilio = require("twilio");
-const { bookMeeting } = require("./calendar");
+import OpenAI from "openai";
+import twilio from "twilio";
+import { bookMeeting } from "./calendar.js";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 
 // Step 1: Handle initial call
-async function handleCallWebhook(req, res) {
+export async function handleCallWebhook(req, res) {
   const twiml = new twilio.twiml.VoiceResponse();
 
   twiml.say("Hello! I'm your scheduling assistant. Please tell me what day and time you'd like to book your meeting.");
@@ -23,7 +23,7 @@ async function handleCallWebhook(req, res) {
 }
 
 // Step 2: Handle Twilio transcription callback
-async function processSpeech(req, res) {
+export async function processSpeech(req, res) {
   const transcription = req.body.TranscriptionText;
   console.log("🗣 Transcription received:", transcription);
 
