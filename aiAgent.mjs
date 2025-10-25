@@ -7,7 +7,8 @@ import { bookMeeting } from "./calendar.mjs";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 async function callGemini(prompt) {
-  const url = "https://generativeai.googleapis.com/v1beta2/models/text-bison-001:generateText";
+  const url = "https://api.generativeai.google.com/v1/models/text-bison-001:generateText";
+
 
   const response = await axios.post(
     url,
