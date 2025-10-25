@@ -25,9 +25,9 @@ async function callGemini(prompt) {
 
     // Gemini now returns candidates array
     let text = "";
-    if (response.text) {
-      text = response.text || "";
-    }
+    
+    text = response.text || "";
+ 
 
     if (!text) {
       throw new Error("Gemini response missing content");
