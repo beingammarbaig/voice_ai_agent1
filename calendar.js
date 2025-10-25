@@ -7,7 +7,7 @@ const oAuth2Client = new google.auth.OAuth2(
 );
 oAuth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 
-async function bookMeeting(name, time) {
+export async function bookMeeting(name, time) {
   const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
   const event = {
     summary: `Meeting with ${name}`,
