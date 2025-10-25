@@ -24,7 +24,8 @@ async function callGemini(prompt) {
     });
 
     // response.text may be undefined
-    const text = response?.text || "";
+    const text = response.text || "";
+    console.log(response)
     if (!text) throw new Error("Gemini response missing content");
 
     return text;
