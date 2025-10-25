@@ -36,7 +36,7 @@ export async function processSpeech(req, res) {
 
   // Extract time from user sentence using AI
   const aiResponse = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: "gpt-3.5-turbo",
     messages: [
       {
         role: "system",
