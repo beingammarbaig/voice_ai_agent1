@@ -25,8 +25,8 @@ async function callGemini(prompt) {
 
     // Gemini now returns candidates array
     let text = "";
-    if (response?.candidates?.length > 0) {
-      text = response.candidates[0]?.content || "";
+    if (response.text) {
+      text = response.text || "";
     }
 
     if (!text) {
