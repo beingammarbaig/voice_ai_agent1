@@ -17,7 +17,7 @@ const GEMINI_MODEL = "gemini-2.5-flash"; // Specify the model you wish to use
  */
 async function callGemini(prompt) {
   try {
-    const response = await ai.generateContent({
+    const response = await ai.models.generateContent({
       model: GEMINI_MODEL,
       contents: prompt,
       config: {
