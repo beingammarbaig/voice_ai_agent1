@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import twilio from "twilio";
-import { bookMeeting } from "./calendar.js";
+import { bookMeeting } from "./calendar.mjs";
 
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });

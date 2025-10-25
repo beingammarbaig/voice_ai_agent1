@@ -1,4 +1,4 @@
-import { handleCallWebhook } from "../aiAgent.js";
+import { handleCallWebhook } from "../aiAgent.mjs";
 
 export default async function handler(req, res) {
   if (req.method === "POST") {
