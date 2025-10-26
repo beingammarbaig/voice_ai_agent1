@@ -1,13 +1,13 @@
 import twilio from "twilio";
+import fetch from "node-fetch";
 import { bookMeeting } from "./calendar.mjs";
-import fetch from "node-fetch"; // For OpenRouter API calls
 
-// Set this in Vercel environment variables
+// Environment variables
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL = "gpt-4o-mini"; // or any other OpenRouter model (e.g., "mistralai/mixtral-8x7b")
+const MODEL = "gpt-4o-mini"; // You can replace with another OpenRouter model
 
 /**
- * Calls OpenRouter API to extract name and datetime
+ * 🧠 Calls OpenRouter to extract structured data (name + datetime)
  */
 async function callOpenRouter(prompt) {
   try {
@@ -23,7 +23,7 @@ async function callOpenRouter(prompt) {
           {
             role: "system",
             content:
-              "You are a JSON data extraction agent. Extract only structured data in JSON format.",
+              "You are a precise data extraction assistant. Return only JSON — no explanations.",
           },
           { role: "user", content: prompt },
         ],
@@ -32,7 +32,7 @@ async function callOpenRouter(prompt) {
 
     const data = await response.json();
     const text = data.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error("No text returned from OpenRouter");
+    if (!text) throw new Error("No content returned from OpenRouter");
     return text;
   } catch (err) {
     throw new Error(`OpenRouter API call failed: ${err.message}`);
@@ -40,7 +40,7 @@ async function callOpenRouter(prompt) {
 }
 
 /**
- * Handle initial call
+ * 📞 Step 1: Handle the initial Twilio call
  */
 export async function handleCallWebhook(req, res) {
   const twiml = new twilio.twiml.VoiceResponse();
@@ -59,7 +59,7 @@ export async function handleCallWebhook(req, res) {
 }
 
 /**
- * Handle Twilio transcription callback
+ * 🎙️ Step 2: Handle Twilio transcription callback
  */
 export async function processSpeech(req, res) {
   const transcription = req.body.TranscriptionText || "User did not speak";
@@ -67,72 +67,73 @@ export async function processSpeech(req, res) {
 
   const currentDate = new Date().toISOString();
 
-  const PROMPT_INSTRUCTION = `
-You are a data extraction assistant.
-Extract the person's name and the meeting datetime from the following user text.
+  const PROMPT = `
+You are a JSON data extraction agent.
 
-Current date: ${currentDate}
+Current date (ISO): ${currentDate}
 User text: "${transcription}"
 
-Rules:
-- Output only valid JSON.
-- JSON format:
+Extract two fields:
 {
   "name": "Full Name",
-  "datetime": "YYYY-MM-DDTHH:MM:SS"
+  "datetime": "YYYY-MM-DDTHH:MM:SS"  // Asia/Karachi local time
 }
-If date or time is unclear, return an empty JSON: {}
+
+If date or time is unclear, return an empty object: {}
 `;
 
   let meetingData = null;
 
   try {
-    const openRouterOutput = await callOpenRouter(PROMPT_INSTRUCTION);
-    const cleanedOutput = openRouterOutput.replace(/^```json\s*|```\s*$/g, "").trim();
-    console.log("🤖 Raw output:", openRouterOutput);
-    console.log("🧹 Cleaned JSON:", cleanedOutput);
+    const aiResponse = await callOpenRouter(PROMPT);
+    const cleaned = aiResponse.replace(/^```json\s*|```\s*$/g, "").trim();
 
-    meetingData = JSON.parse(cleanedOutput);
+    console.log("🤖 Raw output:", aiResponse);
+    console.log("🧹 Cleaned JSON:", cleaned);
 
+    meetingData = JSON.parse(cleaned);
+
+    // ❌ If no valid extraction
     if (!meetingData.name || !meetingData.datetime) {
-      console.log("⚠️ Missing fields, skipping calendar creation.");
       const twiml = new twilio.twiml.VoiceResponse();
-      twiml.say("Sorry, I could not understand the date or time. Please try again.");
+      twiml.say("Sorry, I couldn't understand the date or time. Please try again.");
       res.writeHead(200, { "Content-Type": "text/xml" });
       return res.end(twiml.toString());
     }
   } catch (err) {
-    console.error("❌ Data extraction or parsing failed:", err.message);
+    console.error("❌ Parsing failed:", err.message);
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say("Sorry, I could not extract your meeting details. Please try again later.");
+    twiml.say("Sorry, I couldn't process your meeting request. Please try again later.");
     res.writeHead(200, { "Content-Type": "text/xml" });
     return res.end(twiml.toString());
   }
 
-  // --- Timezone correction (Asia/Karachi) ---
-  const userDate = new Date(meetingData.datetime);
+  // ✅ Convert to Asia/Karachi timezone and ensure correct ISO
   const karachiTime = new Date(
-    userDate.toLocaleString("en-US", { timeZone: "Asia/Karachi" })
+    new Date(meetingData.datetime).toLocaleString("en-US", { timeZone: "Asia/Karachi" })
   );
 
-  // ✅ Book in Google Calendar (30-min duration)
-  await bookMeeting(meetingData.name, karachiTime.toISOString());
+  // ⏰ Book the meeting
+  await bookMeeting(meetingData.name, karachiTime);
 
-  // Format date/time for Twilio voice response
-  const dateOptions = { year: "numeric", month: "2-digit", day: "2-digit" };
-  const timeOptions = {
+  // 🎙️ Format voice-friendly date & time
+  const dateStr = karachiTime.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Karachi",
+  });
+  const timeStr = karachiTime.toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
     timeZone: "Asia/Karachi",
-  };
+  });
 
-  const dateStr = karachiTime.toLocaleDateString("en-US", dateOptions);
-  const timeStr = karachiTime.toLocaleTimeString("en-US", timeOptions);
-
-  // --- Twilio Voice Response ---
+  // 🗣️ Final Twilio Voice Response
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say(`Ok ${meetingData.name}, I booked your appointment on ${dateStr} at ${timeStr}.`);
+
   res.writeHead(200, { "Content-Type": "text/xml" });
   res.end(twiml.toString());
 }
