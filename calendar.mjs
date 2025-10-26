@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 
+// 🔐 Google API Setup
 const oAuth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -11,13 +12,13 @@ oAuth2Client.setCredentials({
 });
 
 /**
- * 🗓️ Book a 30-minute Google Calendar meeting
+ * 📅 Create 30-minute Google Calendar event using exact provided datetime
  */
-export async function bookMeeting(name, karachiTime) {
+export async function bookMeeting(name, meetingTime) {
   const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
 
-  const startTime = new Date(karachiTime);
-  const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // +30 min
+  const startTime = new Date(meetingTime);
+  const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // +30 minutes
 
   const event = {
     summary: `Meeting with ${name}`,
