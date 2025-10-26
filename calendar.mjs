@@ -11,21 +11,24 @@ oAuth2Client.setCredentials({
 });
 
 /**
- * 🗓️ Book a 30-minute Google Calendar meeting (no timezone adjustment)
+ * 🗓️ Book a 30-minute Google Calendar meeting (exact local time, no UTC conversion)
  */
 export async function bookMeeting(name, dateTime) {
   const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
 
+  // ✅ Use the provided dateTime directly (no timezone shifting)
   const startTime = new Date(dateTime);
   const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // +30 minutes
 
   const event = {
     summary: `Meeting with ${name}`,
     start: {
-      dateTime: startTime.toISOString(),
+      dateTime: dateTime, // Use input as-is
+      timeZone: "Asia/Karachi", // Ensure it’s treated as local Karachi time
     },
     end: {
-      dateTime: endTime.toISOString(),
+      dateTime: endTime.toISOString().replace("Z", ""), // remove Z (no UTC shift)
+      timeZone: "Asia/Karachi",
     },
   };
 
@@ -34,9 +37,13 @@ export async function bookMeeting(name, dateTime) {
       calendarId: "primary",
       resource: event,
     });
+
     console.log(`📅 Meeting created successfully for ${name}`);
+    console.log("📆 Start:", startTime.toString());
     console.log("🔗 Google Calendar link:", response.data.htmlLink);
+    return response.data.id;
   } catch (err) {
     console.error("❌ Failed to create Google Calendar event:", err.message);
+    return null;
   }
 }
