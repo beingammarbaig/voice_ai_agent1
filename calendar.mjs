@@ -5,24 +5,38 @@ const oAuth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_SECRET,
   process.env.GOOGLE_REDIRECT_URI
 );
-oAuth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 
+oAuth2Client.setCredentials({
+  refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
+});
+
+/**
+ * Books a 30-minute meeting in Google Calendar
+ */
 export async function bookMeeting(name, time) {
   const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
   const start = new Date(time);
-  const end = new Date(start.getTime() + 30 * 60 * 1000); // +30 minutes
-  const timeZone = "Asia/Karachi";
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
 
   const event = {
     summary: `Meeting with ${name}`,
-    start: { dateTime: start.toISOString(), timeZone },
-    end: { dateTime: end.toISOString(), timeZone },
+    start: {
+      dateTime: start.toISOString(),
+      timeZone: "Asia/Karachi",
+    },
+    end: {
+      dateTime: end.toISOString(),
+      timeZone: "Asia/Karachi",
+    },
   };
 
-  const response = await calendar.events.insert({
-    calendarId: "primary",
-    resource: event,
-  });
-
-  console.log("📅 Meeting created:", response.data.htmlLink);
+  try {
+    const response = await calendar.events.insert({
+      calendarId: "primary",
+      resource: event,
+    });
+    console.log("📅 Meeting created:", response.data.htmlLink);
+  } catch (err) {
+    console.error("❌ Failed to create Google Calendar event:", err.message);
+  }
 }
