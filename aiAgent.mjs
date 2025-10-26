@@ -1,53 +1,44 @@
 import twilio from "twilio";
 import fetch from "node-fetch";
 import { bookMeeting } from "./calendar.mjs";
+import { connectDB, User, Meeting, CallLog } from "./db.mjs";
 
-// Environment variables
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL = "gpt-4o-mini"; // or any other OpenRouter model
+const MODEL = "gpt-4o-mini";
 
 /**
- * 🧠 Calls OpenRouter API to extract structured JSON data
+ * 🧠 Call OpenRouter API
  */
 async function callOpenRouter(prompt) {
-  try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [
-          {
-            role: "system",
-            content: "You are a JSON data extraction assistant. Return only valid JSON.",
-          },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        { role: "system", content: "Return structured JSON only." },
+        { role: "user", content: prompt },
+      ],
+    }),
+  });
 
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error("No content returned from OpenRouter");
-    return text;
-  } catch (err) {
-    throw new Error(`OpenRouter API call failed: ${err.message}`);
-  }
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error("No content returned from OpenRouter");
+  return text;
 }
 
 /**
- * 📞 Step 1: Handle initial Twilio call
+ * 📞 Step 1: Handle the initial Twilio call
  */
 export async function handleCallWebhook(req, res) {
   const twiml = new twilio.twiml.VoiceResponse();
-
   twiml.say(
     "Hello! I'm your scheduling assistant. Please tell me your name and the day and time you'd like to book your meeting."
   );
-
   twiml.record({
     transcribe: true,
     transcribeCallback: "/process-speech",
@@ -58,78 +49,105 @@ export async function handleCallWebhook(req, res) {
 }
 
 /**
- * 🎙️ Step 2: Handle Twilio transcription callback
+ * 🎙️ Step 2: Handle transcription and booking
  */
 export async function processSpeech(req, res) {
+  await connectDB();
+
   const transcription = req.body.TranscriptionText || "User did not speak";
   console.log("🗣 Transcription received:", transcription);
 
+  // Save call log
+  await CallLog.create({ transcription });
+
   const currentDate = new Date().toISOString();
-
   const PROMPT = `
-You are a JSON data extraction assistant.
-Extract the person's name and meeting datetime from this user text.
+Extract only name and meeting datetime.
 
-Current date (ISO): ${currentDate}
+Current date: ${currentDate}
 User text: "${transcription}"
 
-Output only valid JSON:
+Output:
 {
   "name": "Full Name",
-  "datetime": "YYYY-MM-DDTHH:MM:SS"  // in Asia/Karachi local time
+  "datetime": "YYYY-MM-DDTHH:MM:SS"  // Asia/Karachi time
 }
-If unclear, return {}.
 `;
 
-  let meetingData = null;
-
+  let meetingData;
   try {
     const aiResponse = await callOpenRouter(PROMPT);
     const cleaned = aiResponse.replace(/^```json\s*|```\s*$/g, "").trim();
-
-    console.log("🤖 Raw output:", aiResponse);
-    console.log("🧹 Cleaned JSON:", cleaned);
-
     meetingData = JSON.parse(cleaned);
-
-    if (!meetingData.name || !meetingData.datetime) {
-      const twiml = new twilio.twiml.VoiceResponse();
-      twiml.say("Sorry, I couldn't understand the date or time. Please try again.");
-      res.writeHead(200, { "Content-Type": "text/xml" });
-      return res.end(twiml.toString());
-    }
   } catch (err) {
-    console.error("❌ Parsing failed:", err.message);
+    console.error("❌ Extraction failed:", err.message);
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say("Sorry, I couldn't process your meeting request. Please try again later.");
+    twiml.say("Sorry, I could not understand the details. Please try again.");
     res.writeHead(200, { "Content-Type": "text/xml" });
     return res.end(twiml.toString());
   }
 
-  // ✅ Use datetime exactly as returned by the model
+  if (!meetingData.name || !meetingData.datetime) {
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say("Sorry, I could not understand the date or name. Please try again.");
+    res.writeHead(200, { "Content-Type": "text/xml" });
+    return res.end(twiml.toString());
+  }
+
+  // ✅ Use datetime directly
   const meetingTime = new Date(meetingData.datetime);
+  const dateStr = meetingTime.toISOString().split("T")[0];
+  const timeStr = meetingTime.toISOString().split("T")[1].slice(0, 5);
 
-  // 📅 Book meeting in Google Calendar (30 minutes)
-  await bookMeeting(meetingData.name, meetingTime);
+  // 🕐 Check if slot is already booked
+  const slotExists = await Meeting.findOne({
+    datetime: meetingTime,
+  });
 
-  // 🎙️ Format voice-friendly date & time
-  const dateStr = meetingTime.toLocaleDateString("en-US", {
+  if (slotExists) {
+    console.log("❌ Slot not available:", meetingData.datetime);
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say("Sorry, that slot is not available. Please choose another time.");
+    res.writeHead(200, { "Content-Type": "text/xml" });
+    return res.end(twiml.toString());
+  }
+
+  // 🗓️ Create event in Google Calendar
+  const eventId = await bookMeeting(meetingData.name, meetingTime);
+
+  // 💾 Save meeting in MongoDB
+  const user = await User.findOneAndUpdate(
+    { name: meetingData.name },
+    { name: meetingData.name },
+    { upsert: true, new: true }
+  );
+
+  await Meeting.create({
+    userId: user._id,
+    name: meetingData.name,
+    date: dateStr,
+    time: timeStr,
+    datetime: meetingTime,
+    calendarEventId: eventId,
+    status: "scheduled",
+  });
+
+  // 🎙️ Respond to caller
+  const twiml = new twilio.twiml.VoiceResponse();
+  const humanDate = meetingTime.toLocaleDateString("en-US", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     timeZone: "Asia/Karachi",
   });
-  const timeStr = meetingTime.toLocaleTimeString("en-US", {
+  const humanTime = meetingTime.toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
     timeZone: "Asia/Karachi",
   });
 
-  // 🗣️ Twilio voice response
-  const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say(`Ok ${meetingData.name}, I booked your appointment on ${dateStr} at ${timeStr}.`);
-
+  twiml.say(`Ok ${meetingData.name}, I booked your appointment on ${humanDate} at ${humanTime}.`);
   res.writeHead(200, { "Content-Type": "text/xml" });
   res.end(twiml.toString());
 }
