@@ -23,11 +23,9 @@ export async function bookMeeting(name, dateTime) {
     summary: `Meeting with ${name}`,
     start: {
       dateTime: startTime.toISOString(),
-      timeZone: "Asia/Karachi",
     },
     end: {
       dateTime: endTime.toISOString(),
-      timeZone: "Asia/Karachi",
     },
   };
 
