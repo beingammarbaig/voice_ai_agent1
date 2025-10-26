@@ -2,12 +2,12 @@ import twilio from "twilio";
 import fetch from "node-fetch";
 import { bookMeeting } from "./calendar.mjs";
 
-// 🧠 OpenRouter Configuration
+// Environment variables
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL = "gpt-4o-mini"; // can also use "meta-llama/llama-3.1-8b-instruct" or others
+const MODEL = "gpt-4o-mini"; // or any other OpenRouter model
 
 /**
- * 🧠 Call OpenRouter API to extract name + datetime
+ * 🧠 Calls OpenRouter API to extract structured JSON data
  */
 async function callOpenRouter(prompt) {
   try {
@@ -22,8 +22,7 @@ async function callOpenRouter(prompt) {
         messages: [
           {
             role: "system",
-            content:
-              "You are a precise data extraction assistant. Return only valid JSON — no explanations, no markdown.",
+            content: "You are a JSON data extraction assistant. Return only valid JSON.",
           },
           { role: "user", content: prompt },
         ],
@@ -40,7 +39,7 @@ async function callOpenRouter(prompt) {
 }
 
 /**
- * 📞 Step 1: Handle incoming Twilio call
+ * 📞 Step 1: Handle initial Twilio call
  */
 export async function handleCallWebhook(req, res) {
   const twiml = new twilio.twiml.VoiceResponse();
@@ -59,7 +58,7 @@ export async function handleCallWebhook(req, res) {
 }
 
 /**
- * 🎙️ Step 2: Handle speech transcription callback
+ * 🎙️ Step 2: Handle Twilio transcription callback
  */
 export async function processSpeech(req, res) {
   const transcription = req.body.TranscriptionText || "User did not speak";
@@ -69,16 +68,16 @@ export async function processSpeech(req, res) {
 
   const PROMPT = `
 You are a JSON data extraction assistant.
+Extract the person's name and meeting datetime from this user text.
 
 Current date (ISO): ${currentDate}
 User text: "${transcription}"
 
-Extract and return strictly in JSON format:
+Output only valid JSON:
 {
-  "name": "Full name spoken by user",
-  "datetime": "YYYY-MM-DDTHH:MM:SS" // Local time in Asia/Karachi
+  "name": "Full Name",
+  "datetime": "YYYY-MM-DDTHH:MM:SS"  // in Asia/Karachi local time
 }
-
 If unclear, return {}.
 `;
 
@@ -107,13 +106,13 @@ If unclear, return {}.
     return res.end(twiml.toString());
   }
 
-  // ✅ Use the AI-provided datetime directly (no conversion)
+  // ✅ Use datetime exactly as returned by the model
   const meetingTime = new Date(meetingData.datetime);
 
-  // ⏰ Book 30-minute meeting in Google Calendar
+  // 📅 Book meeting in Google Calendar (30 minutes)
   await bookMeeting(meetingData.name, meetingTime);
 
-  // 🎙️ Format for voice output
+  // 🎙️ Format voice-friendly date & time
   const dateStr = meetingTime.toLocaleDateString("en-US", {
     year: "numeric",
     month: "2-digit",
@@ -127,7 +126,7 @@ If unclear, return {}.
     timeZone: "Asia/Karachi",
   });
 
-  // 🗣️ Final Twilio XML Response
+  // 🗣️ Twilio voice response
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say(`Ok ${meetingData.name}, I booked your appointment on ${dateStr} at ${timeStr}.`);
 
