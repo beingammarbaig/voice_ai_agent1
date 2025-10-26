@@ -5,6 +5,7 @@ import { connectDB, User, Meeting, CallLog } from "./db.mjs";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MODEL = "gpt-4o-mini";
+const twilioClient = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
 
 /**
  * 🧠 Call OpenRouter API
@@ -38,7 +39,7 @@ async function callOpenRouter(prompt) {
 export async function handleCallWebhook(req, res) {
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say(
-    "Hello! I'm your scheduling assistant. Please tell me your name and the day and time you'd like to book your meeting."
+    "Hello! I'm your scheduling assistant. Please tell me your name, email address, and the day and time you'd like to book your meeting."
   );
   twiml.record({
     transcribe: true,
@@ -63,27 +64,25 @@ export async function processSpeech(req, res) {
 
   const currentDate = new Date().toISOString();
   const PROMPT = `
-Extract the name and meeting datetime from the following text.
+Extract the name, email, and meeting datetime from the following text.
 
 Current date: ${currentDate}
 User text: "${transcription}"
 
-Output only valid JSON:
+Output valid JSON only:
 {
   "name": "Full Name",
+  "email": "user@example.com",
   "datetime": "YYYY-MM-DDTHH:MM:SS" // Asia/Karachi local time
 }
 `;
 
   let meetingData;
-
   try {
     const aiResponse = await callOpenRouter(PROMPT);
     console.log("🤖 OpenAI Raw Response:\n", aiResponse);
 
     const cleaned = aiResponse.replace(/^```json\s*|```\s*$/g, "").trim();
-    console.log("🧹 Cleaned JSON String:", cleaned);
-
     meetingData = JSON.parse(cleaned);
   } catch (err) {
     console.error("❌ Data extraction failed:", err.message);
@@ -93,24 +92,21 @@ Output only valid JSON:
     return res.end(twiml.toString());
   }
 
-  if (!meetingData.name || !meetingData.datetime) {
+  if (!meetingData.name || !meetingData.datetime || !meetingData.email) {
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say("Sorry, I couldn't get the name or date. Please try again.");
+    twiml.say("Sorry, I need your name, email, and meeting date/time to schedule it properly.");
     res.writeHead(200, { "Content-Type": "text/xml" });
     return res.end(twiml.toString());
   }
 
-  // ✅ Use the exact datetime from OpenAI
   const meetingTime = new Date(meetingData.datetime);
-
   const dateStr = meetingTime.toISOString().split("T")[0];
   const timeStr = meetingTime.toISOString().split("T")[1].slice(0, 5);
 
-  console.log(`📅 Parsed Meeting — Name: ${meetingData.name}, DateTime: ${meetingData.datetime}`);
+  console.log(`📅 Parsed Meeting — Name: ${meetingData.name}, Email: ${meetingData.email}, DateTime: ${meetingData.datetime}`);
 
   // 🕐 Check if the slot is already booked
   const slotExists = await Meeting.findOne({ datetime: meetingTime });
-
   if (slotExists) {
     console.log("⚠️ Slot not available for:", meetingData.datetime);
     const twiml = new twilio.twiml.VoiceResponse();
@@ -119,20 +115,21 @@ Output only valid JSON:
     return res.end(twiml.toString());
   }
 
-  // 🗓️ Create event in Google Calendar
-  const eventId = await bookMeeting(meetingData.name, meetingTime);
+  // 🗓️ Create Google Calendar event (sends email invite automatically)
+  const eventId = await bookMeeting(meetingData.name, meetingTime, meetingData.email);
   console.log("✅ Google Calendar event created. Event ID:", eventId);
 
-  // 💾 Save user and meeting in MongoDB
+  // 💾 Save user + meeting in DB
   const user = await User.findOneAndUpdate(
-    { name: meetingData.name },
-    { name: meetingData.name },
+    { email: meetingData.email },
+    { name: meetingData.name, email: meetingData.email },
     { upsert: true, new: true }
   );
 
   await Meeting.create({
     userId: user._id,
     name: meetingData.name,
+    email: meetingData.email,
     date: dateStr,
     time: timeStr,
     datetime: meetingTime,
@@ -142,7 +139,19 @@ Output only valid JSON:
 
   console.log(`✅ Meeting saved in DB for ${meetingData.name} at ${meetingData.datetime}`);
 
-  // 🎙️ Respond to caller
+  // 📱 Send SMS confirmation (optional)
+  try {
+    await twilioClient.messages.create({
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: req.body.From, // user's phone number
+      body: `📅 Hi ${meetingData.name}, your meeting has been scheduled for ${dateStr} at ${timeStr} (Asia/Karachi). A calendar invite has been sent to ${meetingData.email}.`,
+    });
+    console.log("📨 SMS confirmation sent successfully");
+  } catch (err) {
+    console.error("⚠️ Failed to send SMS:", err.message);
+  }
+
+  // 🎙️ Respond via voice
   const humanDate = meetingTime.toLocaleDateString("en-US", {
     year: "numeric",
     month: "2-digit",
@@ -155,7 +164,11 @@ Output only valid JSON:
   });
 
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say(`Ok ${meetingData.name}, I booked your appointment on ${humanDate} at ${humanTime}.`);
+  twiml.say(
+    `Okay ${meetingData.name}, your meeting is booked on ${humanDate} at ${humanTime}. 
+    You’ll receive a confirmation email at ${meetingData.email} shortly.`
+  );
+
   res.writeHead(200, { "Content-Type": "text/xml" });
   res.end(twiml.toString());
 }
