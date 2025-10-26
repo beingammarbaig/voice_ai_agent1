@@ -11,21 +11,22 @@ oAuth2Client.setCredentials({
 });
 
 /**
- * Books a 30-minute meeting in Google Calendar
+ * 🗓️ Book a 30-minute Google Calendar meeting
  */
-export async function bookMeeting(name, time) {
+export async function bookMeeting(name, karachiTime) {
   const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-  const start = new Date(time);
-  const end = new Date(start.getTime() + 30 * 60 * 1000);
+
+  const startTime = new Date(karachiTime);
+  const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // +30 min
 
   const event = {
     summary: `Meeting with ${name}`,
     start: {
-      dateTime: start.toISOString(),
+      dateTime: startTime.toISOString(),
       timeZone: "Asia/Karachi",
     },
     end: {
-      dateTime: end.toISOString(),
+      dateTime: endTime.toISOString(),
       timeZone: "Asia/Karachi",
     },
   };
@@ -35,7 +36,8 @@ export async function bookMeeting(name, time) {
       calendarId: "primary",
       resource: event,
     });
-    console.log("📅 Meeting created:", response.data.htmlLink);
+    console.log(`📅 Meeting created successfully for ${name}`);
+    console.log("🔗 Google Calendar link:", response.data.htmlLink);
   } catch (err) {
     console.error("❌ Failed to create Google Calendar event:", err.message);
   }
