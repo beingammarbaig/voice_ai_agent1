@@ -52,10 +52,10 @@ export async function processSpeech(req, res) {
   const transcription = req.body.TranscriptionText || "User did not speak";
   console.log("🗣 Transcription received:", transcription);
 
-  // Prompt for GPT
+  // Prompt GPT to extract exact date + time in ISO 8601 format
   const PROMPT_INSTRUCTION = `
-You are a data extraction assistant.
-Extract the person's full name and meeting datetime from the text below.
+You are a scheduling assistant.
+Extract the person's full name and the meeting date and time from the text below.
 
 Output MUST be a single, valid JSON object:
 {
@@ -63,7 +63,8 @@ Output MUST be a single, valid JSON object:
   "datetime": "YYYY-MM-DDTHH:MM:SS"
 }
 
-Assume the current date is ${new Date().toISOString().split("T")[0]} to interpret relative dates like "tomorrow" or "next Monday".
+The datetime must exactly match the date and time mentioned by the user (do NOT change it). 
+Assume the current date is ${new Date().toISOString().split("T")[0]} for relative phrases like "tomorrow" or "next Monday".
 
 Text:
 "${transcription}"
@@ -74,7 +75,7 @@ Text:
   try {
     const gptOutput = await callOpenRouter(PROMPT_INSTRUCTION);
 
-    // Clean and parse JSON
+    // Clean GPT output
     const cleanedOutput = gptOutput.trim().replace(/^```json\s*|```\s*$/g, "");
     console.log("🤖 GPT raw output:", gptOutput);
     console.log("🧹 Cleaned JSON:", cleanedOutput);
@@ -92,14 +93,18 @@ Text:
     return res.status(200).send("Could not extract meeting info, skipping booking.");
   }
 
-  // Book the meeting
-  await bookMeeting(meetingData.name, meetingData.datetime);
+  // Book the meeting for 30 minutes
+  const startTime = new Date(meetingData.datetime);
+  const endTime = new Date(startTime.getTime() + 30 * 60000); // +30 minutes
+  await bookMeeting(meetingData.name, startTime.toISOString(), endTime.toISOString());
 
   // Respond via Twilio
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say(
-    `Great! I have booked your meeting with ${meetingData.name} for ${meetingData.datetime}.`
-  );
+  const localTime = startTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  const localDate = startTime.toLocaleDateString("en-US");
+
+  twiml.say(`Ok ${meetingData.name}, I booked your appointment on ${localDate} at ${localTime}.`);
   res.writeHead(200, { "Content-Type": "text/xml" });
   res.end(twiml.toString());
 }
+
