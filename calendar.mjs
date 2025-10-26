@@ -12,17 +12,16 @@ oAuth2Client.setCredentials({
 
 /**
  * 🗓️ Book a 30-minute Google Calendar meeting
- * - Keeps exact local time from input (Asia/Karachi)
- * - No UTC conversion or 5-hour shift
+ * - Keeps exact local time (Asia/Karachi)
+ * - Sends email invitation to user
  */
-export async function bookMeeting(name, dateTime) {
+export async function bookMeeting(name, dateTime, email) {
   const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
 
-  // Keep the input as exact local time
   const startTime = new Date(dateTime);
   const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
 
-  // Convert to local RFC3339 format for Google (YYYY-MM-DDTHH:MM:SS+05:00)
+  // Format to RFC3339 with local offset
   const toRFC3339Local = (d) => {
     const pad = (n) => String(n).padStart(2, "0");
     const year = d.getFullYear();
@@ -31,11 +30,13 @@ export async function bookMeeting(name, dateTime) {
     const hour = pad(d.getHours());
     const minute = pad(d.getMinutes());
     const second = pad(d.getSeconds());
-    return `${year}-${month}-${day}T${hour}:${minute}:${second}+05:00`; // Asia/Karachi offset
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}+05:00`; // Asia/Karachi
   };
 
+  // ✅ Include attendees for invitation
   const event = {
     summary: `Meeting with ${name}`,
+    description: "Scheduled via AI Voice Agent.",
     start: {
       dateTime: toRFC3339Local(startTime),
       timeZone: "Asia/Karachi",
@@ -44,17 +45,27 @@ export async function bookMeeting(name, dateTime) {
       dateTime: toRFC3339Local(endTime),
       timeZone: "Asia/Karachi",
     },
+    attendees: [
+      { email }, // user invitation
+      { email: process.env.ADMIN_EMAIL || "youremail@gmail.com" }, // organizer/admin copy
+    ],
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: "email", minutes: 30 }, // email reminder before meeting
+        { method: "popup", minutes: 10 }, // popup reminder
+      ],
+    },
   };
 
   try {
     const response = await calendar.events.insert({
       calendarId: "primary",
       resource: event,
+      sendUpdates: "all", // ✅ ensures email invites are sent
     });
 
     console.log(`📅 Meeting created successfully for ${name}`);
-    console.log("📆 Start:", toRFC3339Local(startTime));
-    console.log("📆 End:", toRFC3339Local(endTime));
     console.log("🔗 Google Calendar link:", response.data.htmlLink);
     return response.data.id;
   } catch (err) {
