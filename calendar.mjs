@@ -7,26 +7,16 @@ const oAuth2Client = new google.auth.OAuth2(
 );
 oAuth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 
-export async function bookMeeting(name, startTimeISO) {
+export async function bookMeeting(name, time) {
   const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
-
-  // --- FIX: explicitly treat the given datetime as Asia/Karachi ---
-  const start = new Date(startTimeISO);
-  const end = new Date(start.getTime() + 30 * 60 * 1000); // +30 min
-
-  // Convert to "local" ISO strings with timeZone
+  const start = new Date(time);
+  const end = new Date(start.getTime() + 30 * 60 * 1000); // +30 minutes
   const timeZone = "Asia/Karachi";
 
   const event = {
     summary: `Meeting with ${name}`,
-    start: {
-      dateTime: start.toISOString(), // keep as ISO, but set correct timeZone
-      timeZone,
-    },
-    end: {
-      dateTime: end.toISOString(),
-      timeZone,
-    },
+    start: { dateTime: start.toISOString(), timeZone },
+    end: { dateTime: end.toISOString(), timeZone },
   };
 
   const response = await calendar.events.insert({
