@@ -1,61 +1,43 @@
 // aiAgent.mjs
 import twilio from "twilio";
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import { bookMeeting } from "./calendar.mjs";
 
-// Initialize Gemini client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY, // Set in environment
+// Initialize OpenRouter client
+const ai = new OpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
 });
 
-const GEMINI_MODEL = "gemini-2.5-flash";
-
 /**
- * Calls Gemini to extract structured data (name and datetime)
+ * Calls OpenRouter GPT API to extract structured data (name + datetime)
  * @param {string} prompt
- * @param {string} currentDate - ISO string of today's date for context
- * @returns {Promise<{name: string, datetime: string} | null>}
+ * @returns {Promise<string>} - raw JSON text from GPT
  */
-async function callGemini(prompt, currentDate) {
+async function callOpenRouter(prompt) {
   try {
-    const schema = {
-      type: "object",
-      properties: {
-        name: { type: "string" },
-        datetime: { type: "string" },
-      },
-      required: ["name", "datetime"],
-    };
-
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: `${prompt}\n\nCurrent date: ${currentDate}`,
-      config: {
-        response_mime_type: "application/json",
-        response_schema: schema,
-        temperature: 0,
-        maxOutputTokens: 200,
-      },
+    const response = await ai.chat.completions.create({
+      model: "gpt-4", // or "gpt-3.5-turbo"
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0,
     });
 
-    if (!response.parsed) {
-      console.warn("❌ Gemini returned no parsed data");
-      return null;
-    }
-
-    return response.parsed;
+    const text = response.choices?.[0]?.message?.content;
+    if (!text) throw new Error("OpenRouter response missing content");
+    return text;
   } catch (error) {
-    console.error("❌ Gemini API call failed:", error.message);
-    return null;
+    throw new Error(`OpenRouter API call failed: ${error.message}`);
   }
 }
 
 // Step 1: Handle initial call
 export async function handleCallWebhook(req, res) {
   const twiml = new twilio.twiml.VoiceResponse();
+
   twiml.say(
     "Hello! I'm your scheduling assistant. Please tell me your name and the day and time you'd like to book your meeting."
   );
+
   twiml.record({
     transcribe: true,
     transcribeCallback: "/process-speech",
@@ -67,45 +49,53 @@ export async function handleCallWebhook(req, res) {
 
 // Step 2: Handle Twilio transcription callback
 export async function processSpeech(req, res) {
-  const transcription = req.body.TranscriptionText || "";
+  const transcription = req.body.TranscriptionText || "User did not speak";
   console.log("🗣 Transcription received:", transcription);
 
-  if (!transcription.trim()) {
-    console.log("❌ No user speech detected. No meeting created.");
-    return res.status(200).send("No transcription detected.");
-  }
-
+  // Prompt for GPT
   const PROMPT_INSTRUCTION = `
 You are a data extraction assistant.
-Extract the person's full name and the meeting datetime from the text below.
-Output MUST be a JSON object with fields: { "name": string, "datetime": ISO8601 datetime }.
-If the user mentions relative days like "tomorrow" or "day after tomorrow", calculate the correct date based on the current date.
+Extract the person's full name and meeting datetime from the text below.
+
+Output MUST be a single, valid JSON object:
+{
+  "name": "Full Name",
+  "datetime": "YYYY-MM-DDTHH:MM:SS"
+}
+
+Assume the current date is ${new Date().toISOString().split("T")[0]} to interpret relative dates like "tomorrow" or "next Monday".
+
 Text:
 "${transcription}"
 `;
 
-  // Send current date to Gemini
-  const currentDate = new Date().toISOString();
-
-  let meetingData = await callGemini(PROMPT_INSTRUCTION, currentDate);
-
-  if (!meetingData || !meetingData.name || !meetingData.datetime) {
-    console.log(
-      "❌ Data extraction failed or incomplete. No meeting will be created."
-    );
-    return res.status(200).send("Could not extract meeting data.");
-  }
-
-  console.log(`✅ Extracted Name: ${meetingData.name}`);
-  console.log(`✅ Extracted Datetime: ${meetingData.datetime}`);
+  let meetingData;
 
   try {
-    await bookMeeting(meetingData.name, meetingData.datetime);
+    const gptOutput = await callOpenRouter(PROMPT_INSTRUCTION);
+
+    // Clean and parse JSON
+    const cleanedOutput = gptOutput.trim().replace(/^```json\s*|```\s*$/g, "");
+    console.log("🤖 GPT raw output:", gptOutput);
+    console.log("🧹 Cleaned JSON:", cleanedOutput);
+
+    meetingData = JSON.parse(cleanedOutput);
+
+    if (!meetingData.name || !meetingData.datetime) {
+      throw new Error("Missing 'name' or 'datetime' field in GPT output");
+    }
+
+    console.log(`✅ Extracted Name: ${meetingData.name}`);
+    console.log(`✅ Extracted Datetime: ${meetingData.datetime}`);
   } catch (err) {
-    console.error("❌ Failed to book meeting:", err.message);
-    return res.status(500).send("Failed to book meeting.");
+    console.error("❌ Data extraction failed. No meeting will be created:", err.message);
+    return res.status(200).send("Could not extract meeting info, skipping booking.");
   }
 
+  // Book the meeting
+  await bookMeeting(meetingData.name, meetingData.datetime);
+
+  // Respond via Twilio
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say(
     `Great! I have booked your meeting with ${meetingData.name} for ${meetingData.datetime}.`
