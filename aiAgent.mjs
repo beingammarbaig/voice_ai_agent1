@@ -19,7 +19,7 @@ async function callOpenRouter(prompt) {
     body: JSON.stringify({
       model: MODEL,
       messages: [
-        { role: "system", content: "Return structured JSON only." },
+        { role: "system", content: "Return structured JSON only — no explanations." },
         { role: "user", content: prompt },
       ],
     }),
@@ -27,6 +27,7 @@ async function callOpenRouter(prompt) {
 
   const data = await response.json();
   const text = data.choices?.[0]?.message?.content?.trim();
+
   if (!text) throw new Error("No content returned from OpenRouter");
   return text;
 }
@@ -57,55 +58,61 @@ export async function processSpeech(req, res) {
   const transcription = req.body.TranscriptionText || "User did not speak";
   console.log("🗣 Transcription received:", transcription);
 
-  // Save call log
+  // 💾 Save raw call log
   await CallLog.create({ transcription });
 
   const currentDate = new Date().toISOString();
   const PROMPT = `
-Extract only name and meeting datetime.
+Extract the name and meeting datetime from the following text.
 
 Current date: ${currentDate}
 User text: "${transcription}"
 
-Output:
+Output only valid JSON:
 {
   "name": "Full Name",
-  "datetime": "YYYY-MM-DDTHH:MM:SS"  // Asia/Karachi time
+  "datetime": "YYYY-MM-DDTHH:MM:SS" // Asia/Karachi local time
 }
 `;
 
   let meetingData;
+
   try {
     const aiResponse = await callOpenRouter(PROMPT);
+    console.log("🤖 OpenAI Raw Response:\n", aiResponse);
+
     const cleaned = aiResponse.replace(/^```json\s*|```\s*$/g, "").trim();
+    console.log("🧹 Cleaned JSON String:", cleaned);
+
     meetingData = JSON.parse(cleaned);
   } catch (err) {
-    console.error("❌ Extraction failed:", err.message);
+    console.error("❌ Data extraction failed:", err.message);
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say("Sorry, I could not understand the details. Please try again.");
+    twiml.say("Sorry, I couldn't understand your meeting details. Please try again.");
     res.writeHead(200, { "Content-Type": "text/xml" });
     return res.end(twiml.toString());
   }
 
   if (!meetingData.name || !meetingData.datetime) {
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say("Sorry, I could not understand the date or name. Please try again.");
+    twiml.say("Sorry, I couldn't get the name or date. Please try again.");
     res.writeHead(200, { "Content-Type": "text/xml" });
     return res.end(twiml.toString());
   }
 
-  // ✅ Use datetime directly
+  // ✅ Use the exact datetime from OpenAI
   const meetingTime = new Date(meetingData.datetime);
+
   const dateStr = meetingTime.toISOString().split("T")[0];
   const timeStr = meetingTime.toISOString().split("T")[1].slice(0, 5);
 
-  // 🕐 Check if slot is already booked
-  const slotExists = await Meeting.findOne({
-    datetime: meetingTime,
-  });
+  console.log(`📅 Parsed Meeting — Name: ${meetingData.name}, DateTime: ${meetingData.datetime}`);
+
+  // 🕐 Check if the slot is already booked
+  const slotExists = await Meeting.findOne({ datetime: meetingTime });
 
   if (slotExists) {
-    console.log("❌ Slot not available:", meetingData.datetime);
+    console.log("⚠️ Slot not available for:", meetingData.datetime);
     const twiml = new twilio.twiml.VoiceResponse();
     twiml.say("Sorry, that slot is not available. Please choose another time.");
     res.writeHead(200, { "Content-Type": "text/xml" });
@@ -114,8 +121,9 @@ Output:
 
   // 🗓️ Create event in Google Calendar
   const eventId = await bookMeeting(meetingData.name, meetingTime);
+  console.log("✅ Google Calendar event created. Event ID:", eventId);
 
-  // 💾 Save meeting in MongoDB
+  // 💾 Save user and meeting in MongoDB
   const user = await User.findOneAndUpdate(
     { name: meetingData.name },
     { name: meetingData.name },
@@ -132,8 +140,9 @@ Output:
     status: "scheduled",
   });
 
+  console.log(`✅ Meeting saved in DB for ${meetingData.name} at ${meetingData.datetime}`);
+
   // 🎙️ Respond to caller
-  const twiml = new twilio.twiml.VoiceResponse();
   const humanDate = meetingTime.toLocaleDateString("en-US", {
     year: "numeric",
     month: "2-digit",
@@ -145,6 +154,7 @@ Output:
     hour12: true,
   });
 
+  const twiml = new twilio.twiml.VoiceResponse();
   twiml.say(`Ok ${meetingData.name}, I booked your appointment on ${humanDate} at ${humanTime}.`);
   res.writeHead(200, { "Content-Type": "text/xml" });
   res.end(twiml.toString());
