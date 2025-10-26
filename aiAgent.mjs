@@ -1,36 +1,48 @@
-// aiAgent.mjs
 import twilio from "twilio";
-import OpenAI from "openai";
 import { bookMeeting } from "./calendar.mjs";
+import fetch from "node-fetch"; // Needed for OpenRouter API calls
 
-// Initialize OpenRouter client
-const ai = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: "https://openrouter.ai/api/v1",
-});
+// --- Use OpenRouter API instead of Gemini ---
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const MODEL = "gpt-4o-mini"; // You can change this to another OpenRouter-supported model
 
 /**
- * Calls OpenRouter GPT API to extract structured data (name + datetime)
- * @param {string} prompt
- * @returns {Promise<string>} - raw JSON text from GPT
+ * Calls OpenRouter API to extract structured meeting data.
  */
 async function callOpenRouter(prompt) {
   try {
-    const response = await ai.chat.completions.create({
-      model: "gpt-4", // or "gpt-3.5-turbo"
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0,
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a helpful assistant that extracts structured meeting data (name and datetime) from natural text.",
+          },
+          { role: "user", content: prompt },
+        ],
+      }),
     });
 
-    const text = response.choices?.[0]?.message?.content;
-    if (!text) throw new Error("OpenRouter response missing content");
+    const data = await response.json();
+    const text = data?.choices?.[0]?.message?.content?.trim();
+
+    if (!text) throw new Error("No response text from OpenRouter");
     return text;
-  } catch (error) {
-    throw new Error(`OpenRouter API call failed: ${error.message}`);
+  } catch (err) {
+    throw new Error(`OpenRouter API call failed: ${err.message}`);
   }
 }
 
-// Step 1: Handle initial call
+/**
+ * Twilio: handle initial call
+ */
 export async function handleCallWebhook(req, res) {
   const twiml = new twilio.twiml.VoiceResponse();
 
@@ -47,24 +59,26 @@ export async function handleCallWebhook(req, res) {
   res.end(twiml.toString());
 }
 
-// Step 2: Handle Twilio transcription callback
+/**
+ * Twilio: handle speech transcription
+ */
 export async function processSpeech(req, res) {
   const transcription = req.body.TranscriptionText || "User did not speak";
   console.log("🗣 Transcription received:", transcription);
 
-  // Prompt GPT to extract exact date + time in ISO 8601 format
-  const PROMPT_INSTRUCTION = `
-You are a scheduling assistant.
-Extract the person's full name and the meeting date and time from the text below.
+  const currentDate = new Date().toISOString().split("T")[0];
 
-Output MUST be a single, valid JSON object:
+  const PROMPT_INSTRUCTION = `
+You are a data extraction assistant.
+Extract the person's full name and the meeting datetime (in YYYY-MM-DDTHH:MM:SS format) from the text below.
+
+If the user mentions "tomorrow" or "day after tomorrow", use today's date (${currentDate}) to calculate it.
+
+Output must be a single JSON object only, like this:
 {
   "name": "Full Name",
   "datetime": "YYYY-MM-DDTHH:MM:SS"
 }
-
-The datetime must exactly match the date and time mentioned by the user (do NOT change it). 
-Assume the current date is ${new Date().toISOString().split("T")[0]} for relative phrases like "tomorrow" or "next Monday".
 
 Text:
 "${transcription}"
@@ -73,38 +87,41 @@ Text:
   let meetingData;
 
   try {
-    const gptOutput = await callOpenRouter(PROMPT_INSTRUCTION);
+    const aiOutput = await callOpenRouter(PROMPT_INSTRUCTION);
+    console.log("🤖 Raw AI output:", aiOutput);
 
-    // Clean GPT output
-    const cleanedOutput = gptOutput.trim().replace(/^```json\s*|```\s*$/g, "");
-    console.log("🤖 GPT raw output:", gptOutput);
-    console.log("🧹 Cleaned JSON:", cleanedOutput);
-
-    meetingData = JSON.parse(cleanedOutput);
+    const cleaned = aiOutput.replace(/^```json\s*|```\s*$/g, "").trim();
+    meetingData = JSON.parse(cleaned);
 
     if (!meetingData.name || !meetingData.datetime) {
-      throw new Error("Missing 'name' or 'datetime' field in GPT output");
+      throw new Error("Missing required fields");
     }
-
-    console.log(`✅ Extracted Name: ${meetingData.name}`);
-    console.log(`✅ Extracted Datetime: ${meetingData.datetime}`);
   } catch (err) {
     console.error("❌ Data extraction failed. No meeting will be created:", err.message);
-    return res.status(200).send("Could not extract meeting info, skipping booking.");
+    // Stop execution without creating fallback meeting
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say("Sorry, I couldn't understand the details. Please try again.");
+    res.writeHead(200, { "Content-Type": "text/xml" });
+    return res.end(twiml.toString());
   }
 
-  // Book the meeting for 30 minutes
-  const startTime = new Date(meetingData.datetime);
-  const endTime = new Date(startTime.getTime() + 30 * 60000); // +30 minutes
-  await bookMeeting(meetingData.name, startTime.toISOString(), endTime.toISOString());
+  // --- Timezone correction (Asia/Karachi) ---
+  const userDate = new Date(meetingData.datetime);
+  const karachiOffsetMinutes = -300; // UTC+5
+  const corrected = new Date(userDate.getTime() - userDate.getTimezoneOffset() * 60000 - karachiOffsetMinutes * 60000);
 
-  // Respond via Twilio
+  // Book meeting with correct timezone
+  await bookMeeting(meetingData.name, corrected.toISOString());
+
+  // Format time for Twilio response
+  const dateOptions = { year: "numeric", month: "2-digit", day: "2-digit" };
+  const timeOptions = { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Karachi" };
+  const dateStr = corrected.toLocaleDateString("en-US", dateOptions);
+  const timeStr = corrected.toLocaleTimeString("en-US", timeOptions);
+
   const twiml = new twilio.twiml.VoiceResponse();
-  const localTime = startTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-  const localDate = startTime.toLocaleDateString("en-US");
+  twiml.say(`Ok ${meetingData.name}, I booked your appointment on ${dateStr} at ${timeStr}.`);
 
-  twiml.say(`Ok ${meetingData.name}, I booked your appointment on ${localDate} at ${localTime}.`);
   res.writeHead(200, { "Content-Type": "text/xml" });
   res.end(twiml.toString());
 }
-
